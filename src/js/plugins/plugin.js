@@ -82,6 +82,9 @@ Object.assign(Plugin.prototype, {
         const pluginInstance = new PluginClass(api, config, div);
 
         pluginInstance.addToPlayer = function() {
+            if (__HEADLESS__) {
+                return;
+            }
             const overlaysElement = api.getContainer().querySelector('.jw-overlays');
             if (!overlaysElement) {
                 return;

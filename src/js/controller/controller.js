@@ -80,7 +80,9 @@ Object.assign(Controller.prototype, {
 
         const viewModel = new ViewModel(_model);
 
-        if (!__HEADLESS__) {
+        if (__HEADLESS__) {
+            _model.attributes.visibility = 1.0;
+        } else {
             _view = this._view = new View(_api, viewModel);
             _view.on('all', (type, event) => {
                 if (event && event.doNotForward) {
