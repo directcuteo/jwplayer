@@ -75,7 +75,9 @@ const webpackConfig = {
                     loader: 'babel-loader',
                     options: {
                         babelrc: false,
-                        presets: ['@babel/preset-env'],
+                        presets: [
+                            ['@babel/preset-env', { loose: true, modules: false }]
+                        ],
                         plugins: [
                             {
                                 visitor: {
