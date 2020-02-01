@@ -2,7 +2,7 @@ import { qualityLevel } from 'providers/data-normalizer';
 import { Browser, OS } from 'environment/environment';
 import { isAndroidHls } from 'providers/html5-android-hls';
 import {
-    STATE_IDLE, STATE_PLAYING, STATE_STALLED, MEDIA_META_CUE_PARSED, MEDIA_META, MEDIA_ERROR, WARNING,
+    STATE_IDLE, STATE_PLAYING, STATE_STALLED, MEDIA_META, MEDIA_ERROR, WARNING,
     MEDIA_VISUAL_QUALITY, MEDIA_TYPE, MEDIA_LEVELS, MEDIA_LEVEL_CHANGED, MEDIA_SEEK, NATIVE_FULLSCREEN, STATE_LOADING
 } from 'events/events';
 import VideoEvents from 'providers/video-listener-mixin';
@@ -177,6 +177,7 @@ function VideoProvider(_playerId, _playerConfig, mediaElement) {
 
         seeked() {
             VideoEvents.seeked.call(_this);
+            _this.ensureMetaTracksActive();
         },
 
         waiting() {
@@ -351,7 +352,9 @@ function VideoProvider(_playerId, _playerConfig, mediaElement) {
             if (startDateTime !== _this.startDateTime && !isNaN(startDateTime)) {
                 _this.startDateTime = startDateTime;
                 const programDateTime = startDate.toISOString();
-                const { start, end } = _this.getSeekRange();
+                let { start, end } = _this.getSeekRange();
+                start = Math.max(0, start);
+                end = Math.max(start, end + 10);
                 const metadataType = 'program-date-time';
                 const metadata = {
                     metadataType,
@@ -364,8 +367,6 @@ function VideoProvider(_playerId, _playerConfig, mediaElement) {
                     type: 'metadata',
                     cue,
                 });
-                delete metadata.metadataType;
-                _this.trigger(MEDIA_META_CUE_PARSED, { metadataType, metadata });
             }
         }
     }
@@ -404,6 +405,7 @@ function VideoProvider(_playerId, _playerConfig, mediaElement) {
         dvrEnd = seekRange.end;
         dvrPosition = Math.min(0, _videotag.currentTime - dvrEnd);
         dvrUpdatedTime = now();
+        _this.ensureMetaTracksActive();
     }
 
     _this.getDuration = function() {

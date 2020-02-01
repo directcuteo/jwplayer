@@ -2,7 +2,7 @@ import { loadFile, cancelXhr, convertToVTTCues } from 'controller/tracks-loader'
 import { createId, createLabel } from 'controller/tracks-helper';
 import { parseID3 } from 'providers/utils/id3Parser';
 import { Browser } from 'environment/environment';
-import { MEDIA_META, WARNING } from 'events/events';
+import { MEDIA_META_CUE_PARSED, MEDIA_META, WARNING } from 'events/events';
 import { findWhere, each, filter } from 'utils/underscore';
 
 // Used across all providers for loading tracks and handling browser track-related events
@@ -15,7 +15,8 @@ const Tracks = {
     _metaCuesByTextTime: null,
     _currentTextTrackIndex: -1,
     _unknownCount: 0,
-    _activeCues: null,
+    _lastCuesParsed: {},
+    _activeCues: {},
     _initTextTracks,
     addTracksListener,
     clearTracks,
@@ -37,7 +38,9 @@ const Tracks = {
     createCue,
     addVTTCue,
     addVTTCuesToTrack,
+    parseNewCues,
     triggerActiveCues,
+    ensureMetaTracksActive,
     renderNatively: false
 };
 
@@ -393,7 +396,8 @@ function clearTracks() {
     this._metaCuesByTextTime = null;
     this._unknownCount = 0;
     this._currentTextTrackIndex = -1;
-    this._activeCues = null;
+    this._lastCuesParsed = {};
+    this._activeCues = {};
     if (this.renderNatively) {
         // Removing listener first to ensure that removing cues does not trigger it unnecessarily
         this.removeTracksListener(this.video.textTracks, 'change', this.textTrackChangeHandler);
@@ -667,16 +671,59 @@ function _clearSideloadedTextTracks() {
 }
 
 function _cueChangeHandler(e) {
-    this.triggerActiveCues(e.currentTarget.activeCues);
+    const track = e.currentTarget;
+    this.parseNewCues(track.cues, track._id);
+    this.triggerActiveCues(track.activeCues, track._id);
 }
 
-function triggerActiveCues(activeCues) {
+function parseNewCues(cues, trackId) {
+    if (!cues || !cues.length) {
+        return;
+    }
+    const len = cues.length;
+    const minStartTime = this.video.currentTime - 1;
+    const lastCue = this._lastCuesParsed[trackId];
+    let startIndex = 0;
+    if (lastCue) {
+        startIndex = len;
+        while (startIndex--) {
+            if (cues[startIndex].startTime < minStartTime || cuesMatch(cues[startIndex], lastCue)) {
+                break;
+            }
+        }
+        startIndex++;
+    }
+    const dataCueSets = [];
+    let dataCueSetIndex = -1;
+    let startTime = -1;
+    for (let i = startIndex; i < len; i++) {
+        const cue = cues[i];
+        if (cue.text) {
+            const event = getTextCueMetaEvent(cue, true);
+            this.trigger(MEDIA_META_CUE_PARSED, event);
+        } else if (cue.data || cue.value) {
+            if (cue.startTime !== startTime || cue.endTime === null) {
+                startTime = cue.startTime;
+                dataCueSetIndex++;
+            }
+            const dataCues = dataCueSets[dataCueSetIndex] || (dataCueSets[dataCueSetIndex] = []);
+            dataCues.push(cue);
+        }
+    }
+    this._lastCuesParsed[trackId] = cues[len - 1];
+    dataCueSets.forEach(dataCues => {
+        const event = getId3CueMetaEvent(dataCues);
+        this.trigger(MEDIA_META_CUE_PARSED, event);
+    });
+}
+
+function triggerActiveCues(activeCues, trackId) {
     if (!activeCues || !activeCues.length) {
-        this._activeCues = null;
+        this._activeCues[trackId] = null;
         return;
     }
 
-    const previouslyActiveCues = this._activeCues || [];
+    const previouslyActiveCues = this._activeCues[trackId] || [];
     const dataCues = Array.prototype.filter.call(activeCues, cue => {
         // Prevent duplicate meta events for cues that were active in the previous "cuechange" event
         if (previouslyActiveCues.some(prevCue => cuesMatch(cue, prevCue))) {
@@ -686,35 +733,67 @@ function triggerActiveCues(activeCues) {
             return true;
         }
         if (cue.text) {
-            const metadata = JSON.parse(cue.text);
-            const metadataTime = cue.startTime;
-            const event = {
-                metadataTime,
-                metadata
-            };
-            if (metadata.programDateTime) {
-                event.programDateTime = metadata.programDateTime;
-            }
-            if (metadata.metadataType) {
-                event.metadataType = metadata.metadataType;
-                delete metadata.metadataType;
-            }
+            const event = getTextCueMetaEvent(cue, false);
             this.trigger(MEDIA_META, event);
         }
         return false;
     });
 
     if (dataCues.length) {
-        const metadata = parseID3(dataCues);
-        const metadataTime = dataCues[0].startTime;
-        this.trigger(MEDIA_META, {
-            metadataType: 'id3',
-            metadataTime,
-            metadata
-        });
+        const event = getId3CueMetaEvent(dataCues);
+        this.trigger(MEDIA_META, event);
     }
 
-    this._activeCues = Array.prototype.slice.call(activeCues);
+    this._activeCues[trackId] = Array.prototype.slice.call(activeCues);
+}
+
+function ensureMetaTracksActive() {
+    const tracks = this.video.textTracks;
+    const len = tracks.length;
+    if (len) {
+        for (let i = 0; i < len; i++) {
+            const track = tracks[i];
+            // Safari sometimes disables metadata tracks after seeking without warning
+            if (track.kind === 'metadata' && track.mode === 'disabled') {
+                track.mode = 'hidden';
+            }
+        }
+    }
+}
+
+function getTextCueMetaEvent(cue, parsedEvent) {
+    let metadata;
+    try {
+        metadata = JSON.parse(cue.text);
+    } catch (e) {
+        metadata = {
+            text: cue.text
+        };
+    }
+    const event = {
+        metadata
+    };
+    if (!parsedEvent) {
+        event.metadataTime = cue.startTime;
+        if (metadata.programDateTime) {
+            event.programDateTime = metadata.programDateTime;
+        }
+    }
+    if (metadata.metadataType) {
+        event.metadataType = metadata.metadataType;
+        delete metadata.metadataType;
+    }
+    return event;
+}
+
+function getId3CueMetaEvent(dataCues) {
+    const metadata = parseID3(dataCues);
+    const metadataTime = dataCues[0].startTime;
+    return {
+        metadataType: 'id3',
+        metadataTime,
+        metadata
+    };
 }
 
 function cuesMatch(cue1, cue2) {
@@ -722,7 +801,7 @@ function cuesMatch(cue1, cue2) {
         cue1.endTime === cue2.endTime &&
         cue1.text === cue2.text &&
         cue1.data === cue2.data &&
-        cue1.value === cue2.value;
+        JSON.stringify(cue1.value) === JSON.stringify(cue2.value);
 }
 
 function _cacheVTTCue(track, vttCue, cacheKey) {
