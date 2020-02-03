@@ -111,7 +111,9 @@ function setTextTracks(tracks) {
             if (track.kind === 'metadata') {
                 // track mode needs to be "hidden", not "showing", so that cues don't display as captions in Firefox
                 track.mode = 'hidden';
-                track.oncuechange = _cueChangeHandler.bind(this);
+                this.cueChangeHandler = this.cueChangeHandler || _cueChangeHandler.bind(this);
+                track.removeEventListener('cuechange', this.cueChangeHandler);
+                track.addEventListener('cuechange', this.cueChangeHandler);
                 this._tracksById[track._id] = track;
             } else if (_kindSupported(track.kind)) {
                 const mode = track.mode;
@@ -384,8 +386,8 @@ function clearTracks() {
     const metadataTrack = this._tracksById && this._tracksById.nativemetadata;
     if (this.renderNatively || metadataTrack) {
         _removeCues(this.renderNatively, this.video.textTracks);
-        if (metadataTrack) {
-            metadataTrack.oncuechange = null;
+        if (metadataTrack && this.cueChangeHandler) {
+            metadataTrack.removeEventListener('cuechange', this.cueChangeHandler);
         }
     }
 
@@ -681,7 +683,7 @@ function parseNewCues(cues, trackId) {
         return;
     }
     const len = cues.length;
-    const minStartTime = this.video.currentTime - 1;
+    const minStartTime = this.video.currentTime - 30;
     const lastCue = this._lastCuesParsed[trackId];
     let startIndex = 0;
     if (lastCue) {
