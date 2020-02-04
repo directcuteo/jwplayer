@@ -350,7 +350,7 @@ function VideoProvider(_playerId, _playerConfig, mediaElement) {
             const startDate = _videotag.getStartDate();
             const startDateTime = startDate.getTime ? startDate.getTime() : NaN;
             if (startDateTime !== _this.startDateTime && !isNaN(startDateTime)) {
-                _this.startDateTime = startDateTime;
+                _this.setStartDateTime(startDateTime);
                 const programDateTime = startDate.toISOString();
                 let { start, end } = _this.getSeekRange();
                 start = Math.max(0, start);
@@ -370,6 +370,10 @@ function VideoProvider(_playerId, _playerConfig, mediaElement) {
             }
         }
     }
+
+    _this.setStartDateTime = function(startDateTime) {
+        _this.startDateTime = startDateTime;
+    };
 
     function setTimeBeforeSeek(currentTime) {
         _timeBeforeSeek = currentTime;
